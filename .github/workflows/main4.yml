@@ -1,0 +1,166 @@
+name: Package Application with Pyinstaller
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            os_name: linux
+            artifact_name: hajimipvz-linux
+          - os: windows-latest
+            os_name: windows
+            artifact_name: hajimipvz-windows
+          - os: macos-latest
+            os_name: macos
+            artifact_name: hajimipvz-macos
+    
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+        # Install additional dependencies that might be needed for packaging
+        pip install setuptools wheel
+
+    - name: Create PyInstaller spec file
+      run: |
+        # Create a spec file that works across all platforms
+        cat > hajimipvz.spec << 'EOF'
+# -*- mode: python ; coding: utf-8 -*-
+
+import os
+import sys
+
+block_cipher = None
+
+# Add data files
+datas = []
+if os.path.exists('imgs'):
+    datas.append(('imgs', 'imgs'))
+if os.path.exists('ogg'):
+    datas.append(('ogg', 'ogg'))
+
+a = Analysis(
+    ['integrated_game.py'],
+    pathex=[],
+    binaries=[],
+    datas=datas,
+    hiddenimports=['pkg_resources.extern', 'cv2', 'moviepy', 'numpy'],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name='hajimipvz',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon='imgs/tree/1.png' if os.path.exists('imgs/tree/1.png') else None,
+)
+EOF
+
+    - name: Build with PyInstaller (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: JackMcKew/pyinstaller-action-windows@main
+      with:
+        path: .
+        spec: hajimipvz.spec
+      continue-on-error: true
+
+    - name: Build with PyInstaller (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        pyinstaller hajimipvz.spec
+      continue-on-error: true
+
+    - name: Check if executable was created (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        if (Test-Path dist/hajimipvz.exe) {
+          echo "Executable created successfully"
+        } else {
+          echo "Executable not found, attempting alternative build"
+          pyinstaller --onefile --windowed --name=hajimipvz --icon=imgs/tree/1.png --add-data="imgs;imgs" --add-data="ogg;ogg" --hidden-import=pkg_resources.extern integrated_game.py
+        }
+
+    - name: Check if executable was created (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        if [ -f dist/hajimipvz ]; then
+          echo "Executable created successfully"
+        else
+          echo "Executable not found, attempting alternative build"
+          pyinstaller --onefile --windowed --name=hajimipvz --icon=imgs/tree/1.png --add-data="imgs:imgs" --add-data="ogg:ogg" --hidden-import=pkg_resources.extern integrated_game.py
+        fi
+
+    - name: Create dist directory
+      run: |
+        mkdir -p dist/${{ matrix.os_name }}
+
+    - name: Move executable to dist directory (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        if (Test-Path dist/hajimipvz.exe) {
+          move dist/hajimipvz.exe dist/${{ matrix.os_name }}/
+        }
+
+    - name: Move executable to dist directory (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        if [ -f dist/hajimipvz ]; then
+          mv dist/hajimipvz dist/${{ matrix.os_name }}/
+        fi
+
+    - name: List dist contents
+      run: |
+        echo "Dist directory contents:"
+        ls -la dist/
+        echo "OS-specific directory contents:"
+        ls -la dist/${{ matrix.os_name }}/ || echo "Directory not found"
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: dist/${{ matrix.os_name }}
+      continue-on-error: true
