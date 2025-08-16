@@ -1,0 +1,96 @@
+name: Package Application with Pyinstaller
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            os_name: linux
+            artifact_name: hajimipvz-linux
+          - os: windows-latest
+            os_name: windows
+            artifact_name: hajimipvz-windows
+          - os: macos-latest
+            os_name: macos
+            artifact_name: hajimipvz-macos
+    
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Generate PyInstaller spec file
+      run: |
+        pyi-makespec --onefile --windowed --name=hajimipvz --icon=imgs/tree/1.png --add-data="imgs;imgs" --add-data="ogg;ogg" integrated_game.py
+
+    - name: Modify spec file for hidden imports and data paths
+      run: |
+        # For Windows, we need to add hidden imports for pkg_resources.extern
+        if (Test-Path hajimipvz.spec) {
+          $content = Get-Content hajimipvz.spec -Raw
+          # Add hidden imports
+          $content = $content -replace "a = Analysis\(", "a = Analysis(`n    hiddenimports=['pkg_resources.extern'],"
+          # Fix data paths for cross-platform compatibility
+          $content = $content -replace "'imgs;imgs'", "'imgs:imgs'"
+          $content = $content -replace "'ogg;ogg'", "'ogg:ogg'"
+          $content | Set-Content hajimipvz.spec
+        }
+
+    - name: Modify spec file for Linux/macOS
+      if: matrix.os != 'windows-latest'
+      run: |
+        # For Linux/macOS, fix data paths
+        if [ -f hajimipvz.spec ]; then
+          sed -i "s/'imgs;imgs'/'imgs:imgs'/g" hajimipvz.spec
+          sed -i "s/'ogg;ogg'/'ogg:ogg'/g" hajimipvz.spec
+        fi
+
+    - name: Build with PyInstaller (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: JackMcKew/pyinstaller-action-windows@main
+      with:
+        path: .
+        spec: hajimipvz.spec
+
+    - name: Build with PyInstaller (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        pyinstaller hajimipvz.spec
+
+    - name: Create dist directory
+      run: |
+        mkdir -p dist/${{ matrix.os_name }}
+
+    - name: Move executable to dist directory (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        move dist/hajimipvz.exe dist/${{ matrix.os_name }}/
+
+    - name: Move executable to dist directory (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        mv dist/hajimipvz dist/${{ matrix.os_name }}/
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: dist/${{ matrix.os_name }}
